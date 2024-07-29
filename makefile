@@ -1,4 +1,4 @@
 all: compile
 
 compile:
-	g++ -o clipboard clipboard.cpp -luser32
+	g++ -std=c++11 -o clipboard_monitor.exe clipboard_monitor.cpp -luser32 -lshell32
