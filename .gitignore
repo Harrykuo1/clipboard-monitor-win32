@@ -1,5 +1,6 @@
 vscode/
 output/
+build/
 
 settings.json
 clipboard_monitor.exe
