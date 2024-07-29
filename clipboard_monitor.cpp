@@ -1,7 +1,13 @@
+#ifndef UNICODE
+#define UNICODE
+#endif
+
+#ifndef _UNICODE
+#define _UNICODE
+#endif
+
 #define WINVER 0x0600
 #define _WIN32_WINNT 0x0600
-#define UNICODE
-#define _UNICODE
 
 #include <windows.h>
 #include <shellapi.h>
