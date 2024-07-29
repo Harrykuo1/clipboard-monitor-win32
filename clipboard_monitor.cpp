@@ -5,12 +5,17 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <psapi.h>
 #include <iostream>
 #include <string>
 #include <vector>
 #include <algorithm>
 #include <regex>
 #include <chrono>
+#include <fstream>
+#include <sstream>
+#include <codecvt>
+#include <locale>
 
 #define WM_TRAYICON (WM_USER + 1)
 #define ID_TRAYICON 1
@@ -20,8 +25,8 @@
 bool isModifying = true;
 std::wstring lastContent;
 std::chrono::steady_clock::time_point lastModificationTime;
-
 NOTIFYICONDATA nid = {};
+std::vector<std::wstring> appWhitelist;
 
 struct ClipboardContent {
     bool isValid = false;
@@ -29,6 +34,46 @@ struct ClipboardContent {
     
     ClipboardContent() = default;
 };
+
+void loadAppWhitelist() {
+    std::ifstream file("whitelist.txt");
+    std::string line;
+    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+    while (std::getline(file, line)) {
+        if (!line.empty()) {
+            appWhitelist.push_back(converter.from_bytes(line));
+        }
+    }
+    if (appWhitelist.empty()) {
+        // Default whitelist if file is empty or doesn't exist
+        appWhitelist = {L"chrome.exe", L"firefox.exe", L"iexplore.exe", L"microsoftedge.exe", L"opera.exe", L"brave.exe"};
+    }
+}
+
+std::wstring getActiveWindowProcessName() {
+    HWND hwnd = GetForegroundWindow();
+    DWORD processId;
+    GetWindowThreadProcessId(hwnd, &processId);
+    
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
+    if (hProcess == NULL) return L"";
+
+    WCHAR szProcessName[MAX_PATH];
+    if (GetModuleFileNameEx(hProcess, NULL, szProcessName, MAX_PATH) == 0) {
+        CloseHandle(hProcess);
+        return L"";
+    }
+
+    CloseHandle(hProcess);
+
+    std::wstring processName = szProcessName;
+    size_t pos = processName.find_last_of(L"\\/");
+    return (pos != std::wstring::npos) ? processName.substr(pos + 1) : processName;
+}
+
+bool isFromWhitelist(const std::wstring& processName) {
+    return std::find(appWhitelist.begin(), appWhitelist.end(), processName) != appWhitelist.end();
+}
 
 ClipboardContent readClipboard() {
     ClipboardContent content;
@@ -58,16 +103,13 @@ void writeClipboard(const std::wstring& text) {
         std::wcout << L"Error: Unable to open clipboard" << std::endl;
         return;
     }
-
     EmptyClipboard();
-
     HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, (text.length() + 1) * sizeof(wchar_t));
     if (hMem != NULL) {
         memcpy(GlobalLock(hMem), text.c_str(), (text.length() + 1) * sizeof(wchar_t));
         GlobalUnlock(hMem);
         SetClipboardData(CF_UNICODETEXT, hMem);
     }
-
     CloseClipboard();
 }
 
@@ -76,13 +118,20 @@ void modifyClipboard() {
     
     ClipboardContent content = readClipboard();
     if (content.isValid && content.text != lastContent) {
-        lastContent = content.text;
-        std::wstring modifiedText = content.text;
-        std::wregex re(L"[\r\n\v\f\x85]+");
-        modifiedText = std::regex_replace(modifiedText, re, L" ");
-        writeClipboard(modifiedText);
-        std::wcout << L"Clipboard content modified" << std::endl;
-        lastModificationTime = std::chrono::steady_clock::now();
+        std::wstring activeProcessName = getActiveWindowProcessName();
+        std::wcout << L"Active window process: " << activeProcessName << std::endl;
+        
+        if (isFromWhitelist(activeProcessName)) {
+            lastContent = content.text;
+            std::wstring modifiedText = content.text;
+            std::wregex re(L"[\r\n\v\f\x85]+");
+            modifiedText = std::regex_replace(modifiedText, re, L" ");
+            writeClipboard(modifiedText);
+            std::wcout << L"App clipboard content modified" << std::endl;
+            lastModificationTime = std::chrono::steady_clock::now();
+        } else {
+            std::wcout << L"Clipboard content not modified (not from whitelisted)" << std::endl;
+        }
     }
 }
 
@@ -135,8 +184,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    const wchar_t* CLASS_NAME = L"ClipboardMonitorClass";
+    loadAppWhitelist();
 
+    const wchar_t* CLASS_NAME = L"ClipboardMonitorClass";
     WNDCLASS wc = {};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
