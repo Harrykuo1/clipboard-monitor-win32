@@ -1,5 +1,6 @@
 #include "ClipboardMonitor.h"
 #include "../utils/Utils.h"
+#include "../utils/DebugMacros.h"
 #include <windows.h>
 #include <fstream>
 #include <algorithm>
@@ -9,29 +10,65 @@
 
 ClipboardMonitor::ClipboardMonitor() : m_isModifying(true) {
     loadAppWhitelist();
+    DEBUG_LOG(L"ClipboardMonitor initialized");
 }
 
 void ClipboardMonitor::loadAppWhitelist() {
-    std::ifstream file("../../resources/whitelist.txt");
+    std::ifstream file("resources/whitelist.txt");
     std::string line;
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
     while (std::getline(file, line)) {
-        if (!line.empty()) {
-            m_appWhitelist.push_back(converter.from_bytes(line));
+        std::wstring wline = converter.from_bytes(line);
+        if (!wline.empty()) {
+            m_appWhitelist.insert(wline);
         }
     }
     if (m_appWhitelist.empty()) {
         m_appWhitelist = {L"chrome.exe", L"firefox.exe", L"iexplore.exe", L"microsoftedge.exe", L"opera.exe", L"brave.exe"};
     }
+    DEBUG_LOG(L"App whitelist loaded. Items: " << m_appWhitelist.size());
+    file.close();
+}
+
+void ClipboardMonitor::saveAppWhitelist() {
+    std::ofstream file("resources/whitelist.txt");
+    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+    for (const auto& app : m_appWhitelist) {
+        file << converter.to_bytes(app) << std::endl;
+    }
+    DEBUG_LOG(L"App whitelist saved");
+    file.close();
+}
+
+void ClipboardMonitor::addToWhitelist(const std::wstring& app) {
+    auto [it, inserted] = m_appWhitelist.insert(app);
+    if (inserted) {
+        DEBUG_LOG(L"Added to whitelist: " << app);
+    } else {
+        DEBUG_LOG(L"Item already in whitelist: " << app);
+    }
+}
+
+void ClipboardMonitor::removeFromWhitelist(const std::wstring& app) {
+    auto it = m_appWhitelist.find(app);
+    if (it != m_appWhitelist.end()) {
+        m_appWhitelist.erase(it);
+        DEBUG_LOG(L"Removed from whitelist: " << app);
+    } else {
+        DEBUG_LOG(L"Item not found in whitelist: " << app);
+    }
 }
 
 void ClipboardMonitor::modifyClipboard() {
-    if (!m_isModifying) return;
+    if (!m_isModifying) {
+        DEBUG_LOG(L"Clipboard modification is paused");
+        return;
+    }
     
     ClipboardContent content = readClipboard();
     if (content.isValid && content.text != m_lastContent) {
         std::wstring activeProcessName = getActiveWindowProcessName();
-        std::wcout << L"Active window process: " << activeProcessName << std::endl;
+        DEBUG_LOG(L"Active window process: " << activeProcessName);
         
         if (isFromWhitelist(activeProcessName)) {
             m_lastContent = content.text;
@@ -39,22 +76,25 @@ void ClipboardMonitor::modifyClipboard() {
             std::wregex re(L"[\r\n\v\f\x85]+");
             modifiedText = std::regex_replace(modifiedText, re, L" ");
             writeClipboard(modifiedText);
-            std::wcout << L"App clipboard content modified" << std::endl;
+            DEBUG_LOG(L"Clipboard content modified");
             m_lastModificationTime = std::chrono::steady_clock::now();
         } else {
-            std::wcout << L"Clipboard content not modified (not from whitelisted)" << std::endl;
+            DEBUG_LOG(L"Clipboard content not modified (not from whitelisted app)");
         }
+    } else {
+        DEBUG_LOG(L"Clipboard content unchanged or invalid");
     }
 }
 
 void ClipboardMonitor::toggleModifying() {
     m_isModifying = !m_isModifying;
+    DEBUG_LOG(L"Clipboard modification " << (m_isModifying ? L"enabled" : L"disabled"));
 }
 
 ClipboardContent ClipboardMonitor::readClipboard() {
     ClipboardContent content;
     if (!OpenClipboard(NULL)) {
-        std::wcout << L"Error: Unable to open clipboard" << std::endl;
+        DEBUG_LOG(L"Error: Unable to open clipboard");
         return content;
     }
 
@@ -66,6 +106,7 @@ ClipboardContent ClipboardMonitor::readClipboard() {
                 content.text = std::wstring(pszText);
                 content.isValid = true;
                 GlobalUnlock(hData);
+                DEBUG_LOG(L"Clipboard content read: " << content.text);
             }
         }
     }
@@ -76,7 +117,7 @@ ClipboardContent ClipboardMonitor::readClipboard() {
 
 void ClipboardMonitor::writeClipboard(const std::wstring& text) {
     if (!OpenClipboard(NULL)) {
-        std::wcout << L"Error: Unable to open clipboard" << std::endl;
+        DEBUG_LOG(L"Error: Unable to open clipboard for writing");
         return;
     }
     EmptyClipboard();
@@ -85,10 +126,11 @@ void ClipboardMonitor::writeClipboard(const std::wstring& text) {
         memcpy(GlobalLock(hMem), text.c_str(), (text.length() + 1) * sizeof(wchar_t));
         GlobalUnlock(hMem);
         SetClipboardData(CF_UNICODETEXT, hMem);
+        DEBUG_LOG(L"Modified content written to clipboard: " << text);
     }
     CloseClipboard();
 }
 
 bool ClipboardMonitor::isFromWhitelist(const std::wstring& processName) {
-    return std::find(m_appWhitelist.begin(), m_appWhitelist.end(), processName) != m_appWhitelist.end();
+    return m_appWhitelist.find(processName) != m_appWhitelist.end();
 }

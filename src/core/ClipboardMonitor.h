@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <set>
 
 struct ClipboardContent {
     bool isValid = false;
@@ -15,15 +16,19 @@ class ClipboardMonitor {
 public:
     ClipboardMonitor();
     void loadAppWhitelist();
+    void saveAppWhitelist();
     void modifyClipboard();
     void toggleModifying();
     bool isModifying() const { return m_isModifying; }
+    void addToWhitelist(const std::wstring& app);
+    void removeFromWhitelist(const std::wstring& app);
+    const std::set<std::wstring>& getWhitelist() const { return m_appWhitelist; }
 
 private:
     bool m_isModifying;
     std::wstring m_lastContent;
     std::chrono::steady_clock::time_point m_lastModificationTime;
-    std::vector<std::wstring> m_appWhitelist;
+    std::set<std::wstring> m_appWhitelist;
 
     ClipboardContent readClipboard();
     void writeClipboard(const std::wstring& text);
